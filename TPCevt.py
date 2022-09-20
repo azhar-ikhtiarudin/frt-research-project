@@ -50,7 +50,7 @@ def generate_carriers(PrimaryEvt, det):
 
     The function will make a new column 'NIP' in PrimaryEvt in place, storing the number of ion pairs.
     '''
-    PrimaryEvt['NIP'] = np.random.poisson(PrimaryEvt['Edep']/det.w_value)
+    PrimaryEvt['NIP'] = np.random.poisson(PrimaryEvt['Edep']/det.wval)
     return
 
 def driftsigma_trans(z, det):
@@ -73,7 +73,7 @@ def drift_carriers(PrimaryEvt, det):
     Returns a dataframe of drifted carriers with (index in PrimaryEvt, x, y, dt)
     '''
     Ndrifted = PrimaryEvt['NIP'].sum()
-    drifteddict = {'idx_Primary': np.empty(Ndrifted, dtype=np.int), 'x': np.empty(Ndrifted, dtype=np.float),
+    drifteddict = {'idx_PrimaryEvt': np.empty(Ndrifted, dtype=np.int), 'x': np.empty(Ndrifted, dtype=np.float),
                   'y': np.empty(Ndrifted, dtype=np.float), 'dt': np.empty(Ndrifted, dtype=np.float)}
     counter = 0
     for i in range(len(PrimaryEvt)):
@@ -93,7 +93,7 @@ def drift_carriers(PrimaryEvt, det):
     
     return pd.DataFrame(drifteddict)
 
-def gain_and_readout(DriftedEvt, det):
+def gain_and_readout(DriftedEvt, det, nsigma_extend=5):
     '''
     Apply avalanche gain and read out the event. Only reads out a subset of co-ords about the track.
     
@@ -120,16 +120,16 @@ def gain_and_readout(DriftedEvt, det):
                                 nsigma_extend*det.PSFstd)/det.pitch_y)*det.pitch_y:
                             det.pitch_y,
                             np.floor((minvals['dt'] - 
-                                nsigma_extend*det.readout_sigma_t)/det.samplerate)*det.samplerate:
+                                nsigma_extend*det.gain_sigma_t)/det.samplerate)*det.samplerate:
                             np.ceil((maxvals['dt'] + 
-                                nsigma_extend*det.readout_sigma_t)/det.samplerate)*det.samplerate:
+                                nsigma_extend*det.gain_sigma_t)/det.samplerate)*det.samplerate:
                             det.samplerate]
     pos = np.stack(ReadoutGrid, axis=3)
     ReadoutEvt = None
     for i in range(len(DriftedEvt)):
         thisGain = np.random.exponential(scale=det.gain_mean)
         rv = multivariate_normal([DriftedEvt.iloc[i]['x'], DriftedEvt.iloc[i]['y'], 
-            DriftedEvt.iloc[i]['dt']], np.diag([PSF_std, PSF_std,readout_sigma_t]))
+            DriftedEvt.iloc[i]['dt']], np.diag([det.PSFstd, det.PSFstd,det.gain_sigma_t]))
         if ReadoutEvt is None:
             #The factor pitch_x*pitch_y*sample_rate converts from probability density 
             #to 'normalised' probability
