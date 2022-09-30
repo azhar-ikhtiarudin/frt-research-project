@@ -72,30 +72,34 @@ def drift_carriers(PrimaryEvt, det):
 
     Returns a dataframe of drifted carriers with (index in PrimaryEvt, x, y, dt)
     '''
-    Ndrifted = PrimaryEvt['NIP'].sum()
-    drifteddict = {'idx_PrimaryEvt': np.empty(Ndrifted, dtype=np.int), 'x': np.empty(Ndrifted, dtype=np.float),
-                  'y': np.empty(Ndrifted, dtype=np.float), 'dt': np.empty(Ndrifted, dtype=np.float)}
-    counter = 0
-    for i in range(len(PrimaryEvt)):
-        numtodrift = PrimaryEvt['NIP'][i]
+    Ndrifted = int(PrimaryEvt['NIP'].sum())
+    #drifteddict = {'idx_PrimaryEvt': np.empty(Ndrifted, dtype=np.int), 'x': np.empty(Ndrifted, dtype=np.float),
+    #              'y': np.empty(Ndrifted, dtype=np.float), 'dt': np.empty(Ndrifted, dtype=np.float)}
+    DriftedEvt = pd.DataFrame(columns=['idx_PrimaryEvt', 'x', 'y', 'dt'], 
+            index=np.arange(PrimaryEvt.index[0],Ndrifted+PrimaryEvt.index[0],1))
+    counter = int(PrimaryEvt.index[0])
+    #offset = int(PrimaryEvt.index[0])
+    #This loop assumes the index increases by one unit with each entry.
+    for i in PrimaryEvt.index:
+        numtodrift = int(PrimaryEvt['NIP'][i])
         thisz = PrimaryEvt['z'][i]
-        drifteddict['idx_PrimaryEvt'][counter:(counter+numtodrift)] = i
-        drifteddict['x'][counter:(counter+numtodrift)] = PrimaryEvt['x'][i] + np.random.normal(loc=0,
+        DriftedEvt['idx_PrimaryEvt'].loc[counter:(counter+numtodrift)-1] = i
+        DriftedEvt['x'].loc[counter:(counter+numtodrift)-1] = PrimaryEvt['x'][i] + np.random.normal(loc=0,
                                                                 scale=driftsigma_trans(thisz, det),
                                                                 size=numtodrift)
-        drifteddict['y'][counter:(counter+numtodrift)] = PrimaryEvt['y'][i] + np.random.normal(loc=0,
+        DriftedEvt['y'].loc[counter:(counter+numtodrift)-1] = PrimaryEvt['y'][i] + np.random.normal(loc=0,
                                                                 scale=driftsigma_trans(thisz, det),
                                                                 size=numtodrift)
-        drifteddict['dt'][counter:(counter+numtodrift)] = (thisz + np.random.normal(loc=0,
+        DriftedEvt['dt'].loc[counter:(counter+numtodrift)-1] = (thisz + np.random.normal(loc=0,
                                                                 scale=driftsigma_long(thisz, det),
                                                                 size=numtodrift))/det.vdrift
         counter += numtodrift
     
-    return pd.DataFrame(drifteddict)
+    return DriftedEvt
 
-def gain_and_readout(DriftedEvt, det, nsigma_extend=5):
+def gain_and_readout_grid(DriftedEvt, det, nsigma_extend=5):
     '''
-    Apply avalanche gain and read out the event. Only reads out a subset of co-ords about the track.
+    Apply avalanche gain and read out the event. Only reads out a subset of co-ords about the track, on a grid.
     
     Inputs:
 
@@ -126,7 +130,7 @@ def gain_and_readout(DriftedEvt, det, nsigma_extend=5):
                             det.samplerate]
     pos = np.stack(ReadoutGrid, axis=3)
     ReadoutEvt = None
-    for i in range(len(DriftedEvt)):
+    for i in DriftedEvt.index:
         thisGain = np.random.exponential(scale=det.gain_mean)
         rv = multivariate_normal([DriftedEvt.iloc[i]['x'], DriftedEvt.iloc[i]['y'], 
             DriftedEvt.iloc[i]['dt']], np.diag([det.PSFstd, det.PSFstd,det.gain_sigma_t]))
@@ -137,7 +141,60 @@ def gain_and_readout(DriftedEvt, det, nsigma_extend=5):
         else:
             ReadoutEvt += rv.pdf(pos)*det.pitch_x*det.pitch_y*det.samplerate*thisGain
 
+    #This takes a lot of memory.
     return ReadoutGrid, ReadoutEvt
+
+def gain_and_readout(DriftedEvt, det, nsigma_extend=3, thresh=1e1):
+    '''
+    Apply avalanche gain and read out the event. Only reads out a subset of co-ords about the track, on a grid.
+    
+    Inputs:
+
+    - DriftedEvt is a dataframe containing the x,y,dt co-ordinates of every drifted carrier.
+
+    - det is an instance of TPCevt.Detector, with the gain/readout info set.
+
+    - nsigma_extend is the # of point spread function std to extend by about the track extremities.
+
+    - thresh is the threshold (in number of electrons, below which the output is cut.
+
+    Returns a pandas dataframe with (x,y,dt) readout co-ordinates and the number of electrons being read out
+    '''
+    minvals = DriftedEvt.min()
+    maxvals = DriftedEvt.max()
+    ReadoutGrid = np.mgrid[np.floor((minvals['x']- det.PSFmean - 
+                                    nsigma_extend*det.PSFstd)/det.pitch_x)*det.pitch_x:
+                            np.ceil((maxvals['x'] + det.PSFmean + 
+                                    nsigma_extend*det.PSFstd)/det.pitch_x)*det.pitch_x:
+                            det.pitch_x,
+                            np.floor((minvals['y'] - det.PSFmean - 
+                                nsigma_extend*det.PSFstd)/det.pitch_y)*det.pitch_y:
+                            np.ceil((maxvals['y'] + det.PSFmean + 
+                                nsigma_extend*det.PSFstd)/det.pitch_y)*det.pitch_y:
+                            det.pitch_y,
+                            np.floor((minvals['dt'] - 
+                                nsigma_extend*det.gain_sigma_t)/det.samplerate)*det.samplerate:
+                            np.ceil((maxvals['dt'] + 
+                                nsigma_extend*det.gain_sigma_t)/det.samplerate)*det.samplerate:
+                            det.samplerate]
+    pos = np.stack(ReadoutGrid, axis=3)
+    ReadoutEvt = None
+    for i in DriftedEvt.index:
+        thisGain = np.random.exponential(scale=det.gain_mean)
+        rv = multivariate_normal([DriftedEvt.iloc[i]['x'], DriftedEvt.iloc[i]['y'], 
+            DriftedEvt.iloc[i]['dt']], np.diag([det.PSFstd, det.PSFstd,det.gain_sigma_t]))
+        if ReadoutEvt is None:
+            #The factor pitch_x*pitch_y*sample_rate converts from probability density 
+            #to 'normalised' probability
+            ReadoutEvt = rv.pdf(pos)*det.pitch_x*det.pitch_y*det.samplerate*thisGain
+        else:
+            ReadoutEvt += rv.pdf(pos)*det.pitch_x*det.pitch_y*det.samplerate*thisGain
+
+    #Only record readout elements where Nel > thresh
+    themask = ReadoutEvt >= thresh
+
+    return pd.DataFrame({'x': ReadoutGrid[0][themask], 'y': ReadoutGrid[1][themask], 'dt': ReadoutGrid[2][themask],
+                        'Nel': ReadoutEvt[themask]})
 
 #Putting this on the backburner for now...
 #def plot_readout_projection(ReadoutGrid, ReadoutEvt, xidx, yidx):
