@@ -73,6 +73,8 @@ def drift_carriers(PrimaryEvt, det):
     Returns a dataframe of drifted carriers with (index in PrimaryEvt, x, y, dt)
     '''
     Ndrifted = int(PrimaryEvt['NIP'].sum())
+    if not Ndrifted>0:
+        return pd.DataFrame(columns=['idx_PrimaryEvt', 'x', 'y', 'dt'])
     #drifteddict = {'idx_PrimaryEvt': np.empty(Ndrifted, dtype=np.int), 'x': np.empty(Ndrifted, dtype=np.float),
     #              'y': np.empty(Ndrifted, dtype=np.float), 'dt': np.empty(Ndrifted, dtype=np.float)}
     DriftedEvt = pd.DataFrame(columns=['idx_PrimaryEvt', 'x', 'y', 'dt'], 
@@ -193,8 +195,18 @@ def gain_and_readout(DriftedEvt, det, nsigma_extend=3, thresh=1e1):
     #Only record readout elements where Nel > thresh
     themask = ReadoutEvt >= thresh
 
-    return pd.DataFrame({'x': ReadoutGrid[0][themask], 'y': ReadoutGrid[1][themask], 'dt': ReadoutGrid[2][themask],
-                        'Nel': ReadoutEvt[themask]})
+    if np.sum(themask) == 0:
+        print('No channels above threshold!')
+        return pd.DataFrame(columns=['x', 'y', 'dt', 'Nel'])
+
+    try:
+        return pd.DataFrame({'x': ReadoutGrid[0][themask].flatten(), 'y': ReadoutGrid[1][themask].flatten(), 
+            'dt': ReadoutGrid[2][themask].flatten(), 'Nel': ReadoutEvt[themask]})
+    except:
+        print(f'DriftedEvt: {DriftedEvt}')
+        print(f'themask: {themask}\nReadoutGrid[0]: {ReadoutGrid[0]}\nReadoutEvt: {ReadoutEvt}\nReadoutGrid: {ReadoutGrid}')
+        print(f'ReadoutGrid.shape: {ReadoutGrid.shape}, ReadoutEvt.shape: {ReadoutEvt.shape}, themask.shape = {themask.shape}')
+        raise
 
 #Putting this on the backburner for now...
 #def plot_readout_projection(ReadoutGrid, ReadoutEvt, xidx, yidx):
